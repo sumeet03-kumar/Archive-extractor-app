@@ -1,0 +1,49 @@
+services:
+    postgres:
+        image: postgres:15-alpine
+        container_name: archive-extractor-db
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: password
+            POSTGRES_DB: extractor
+        ports:
+            - "5432:5432"
+        volumes:
+            - postgres_data:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U postgres -d extractor"]
+            interval: 5s
+            timeout: 5s
+            retries: 5
+            start_period: 10s
+        networks:
+            - extractor-network
+
+    app:
+        build: .
+        container_name: archive-extractor-app
+        environment:
+            DB_HOST: postgres
+            DB_PORT: 5432
+            DB_NAME: extractor
+            DB_USER: postgres
+            DB_PASSWORD: password
+            PORT: 5000
+            CONCURRENCY_REQUESTS: 4
+            MAX_NESTED_LEVEL: 10
+        ports:
+            - "5000:5000"
+        depends_on:
+            postgres:
+                condition: service_healthy
+        volumes:
+            - ./app.py:/app/app.py
+        networks:
+            - extractor-network
+
+volumes:
+    postgres_data:
+
+networks:
+    extractor-network:
+        driver: bridge
