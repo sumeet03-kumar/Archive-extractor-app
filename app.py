@@ -11,7 +11,7 @@ from pathlib import Path
 from flask import Flask, request, jsonify
 import os
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import Integer, String, ForeignKey, DateTime, Text
+from sqlalchemy import Integer, String, ForeignKey, DateTime, Text, text
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from werkzeug.utils import secure_filename
@@ -345,6 +345,15 @@ def process_extraction_job(job_id, archive_path, pattern):
                 os.remove(archive_path)
 
 # ==================== Routes ====================
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    try:
+        db.session.execute(text('SELECT 1'))
+        return jsonify({'status': 'ok'}), 200
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/extractions', methods=['POST'])
 def submit_extraction():
