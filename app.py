@@ -412,6 +412,14 @@ def get_job_results(job_id):
 
     results_query = Result.query.filter_by(job_id=job_id)
     total_count = results_query.count()
+    if total_count == 0:
+        job = Job.query.filter_by(id=job_id).first()
+        if not job:
+            return jsonify({'error': 'Job not found'}), 404
+        if job.status in ('pending', 'processing'):
+            return jsonify({'error': 'Results not available yet'}), 202
+        elif job.status == 'failed':
+            return jsonify({'error': f"Job failed: {job.error}"}), 500
 
     results = results_query.offset(
         (page - 1) * per_page
