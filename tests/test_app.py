@@ -1,86 +1,134 @@
 import pytest
 import os
-import tempfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from app import ArchiveExtractor
 
+class TestExtractArchive:
+    @pytest.fixture(autouse=True)
+    def extractor(self):
+        self._executor = ThreadPoolExecutor(max_workers=2)
+        self.ext = ArchiveExtractor(self._executor, max_depth=2)
+        yield
+        self.ext.cleanup()
+        self._executor.shutdown(wait=False)
 
-@pytest.fixture
-def sample_zip_archive():
-    temp_dir = tempfile.mkdtemp()
-    test_file1 = os.path.join(temp_dir, 'test1.txt')
-    test_file2_dir = os.path.join(temp_dir, 'subdir')
-    os.makedirs(test_file2_dir, exist_ok=True)
-    with open(test_file1, 'w') as f:
-        f.write('test content 1')
-    with open(os.path.join(test_file2_dir, 'test2.txt'), 'w') as f:
-        f.write('test content 2')
-    zip_path = os.path.join(temp_dir, 'test_archive.zip')
-    with zipfile.ZipFile(zip_path, 'w') as zipf:
-        zipf.write(test_file1, arcname='test1.txt')
-        zipf.write(os.path.join(test_file2_dir, 'test2.txt'), arcname='subdir/test2.txt')
-    yield zip_path
-    import shutil
-    shutil.rmtree(temp_dir, ignore_errors=True)
+    def test_extract_zip_produces_files(self, make_zip, tmp_path):
+        archive = tmp_path / 'test.zip'
+        archive.write_bytes(make_zip({'file1.txt': 'Content of file 1', 'sub/file2.txt': 'Content of file 2'}))
+        
+        extracted = self.ext.extract_archive(str(archive))
 
-@pytest.fixture
-def executor():
-    ex = ThreadPoolExecutor(max_workers=2)
-    yield ex
-    ex.shutdown()
+        with open(os.path.join(extracted, 'file1.txt')) as f:
+            assert f.read() == 'Content of file 1'
 
+        assert os.path.isdir(extracted)
+        assert os.path.exists(os.path.join(extracted, 'file1.txt'))
+        assert os.path.exists(os.path.join(extracted, 'sub', 'file2.txt'))
 
-def test_is_archive_zip(executor):
-    extractor = ArchiveExtractor(executor=executor)
-    assert extractor.is_archive('test.zip') is True
-    assert extractor.is_archive('test.ZIP') is True
+    def test_extract_tar_gz_produces_files(self, make_tar_gz, tmp_path):
+        archive = tmp_path / 'test.tar.gz'
+        archive.write_bytes(make_tar_gz({'file1.txt': 'Content of file'}))
 
+        extracted = self.ext.extract_archive(str(archive))
 
-def test_is_archive_tar(executor):
-    extractor = ArchiveExtractor(executor=executor)
-    assert extractor.is_archive('test.tar') is True
-    assert extractor.is_archive('test.tar.gz') is True
-    assert extractor.is_archive('test.tgz') is True
+        assert os.path.isdir(extracted)
+        assert os.path.exists(os.path.join(extracted, 'file1.txt'))
 
+    def test_extract_nested_archives(self, make_zip, tmp_path):
+        inner_bytes = make_zip({'inner.txt': 'Inner content'})
 
-def test_is_archive_non_archive(executor):
-    extractor = ArchiveExtractor(executor=executor)
-    assert extractor.is_archive('test.txt') is False
-    assert extractor.is_archive('test.pdf') is False
+        outer = tmp_path / 'outer.zip'
 
+        with zipfile.ZipFile(str(outer), 'w') as zf:
+            zf.writestr('nested.zip', inner_bytes)
+            zf.writestr('root.txt', 'root content')
 
-def test_matches_pattern_simple(executor):
-    extractor = ArchiveExtractor(executor=executor)
-    assert extractor.matches_pattern('test.txt', '*.txt') is True
-    assert extractor.matches_pattern('test.pdf', '*.txt') is False
+        self.ext.run(str(outer), pattern='*.txt', source_archive_name='outer.zip')
 
-
-def test_extract_zip_archive(sample_zip_archive, executor):
-    with ArchiveExtractor(executor=executor) as extractor:
-        extracted_dir = extractor.extract_archive(sample_zip_archive)
-        assert os.path.exists(extracted_dir)
-        assert os.path.exists(os.path.join(extracted_dir, 'test1.txt'))
-        assert os.path.exists(os.path.join(extracted_dir, 'subdir', 'test2.txt'))
-
-
-def test_extract_and_find_zip(sample_zip_archive, executor):
-    with ArchiveExtractor(executor=executor) as extractor:
-        import threading
-        threading.Thread(target=extractor.run, args=(sample_zip_archive, '*.txt', 'test.zip')).start()
         results = []
         while True:
-            res = extractor.results_queue.get()
-            if res is None:
+            item = self.ext.results_queue.get()
+            if item is None:
                 break
-            results.append(res)
-        assert len(results) == 2
-        assert any(r['file_name'] == 'test1.txt' for r in results)
-        assert any(r['file_name'] == 'test2.txt' for r in results)
+            results.append(item)
+
+        assert any(r['file_name'] == 'root.txt' and r['nesting_depth'] == 0 for r in results)
+        assert any(r['file_name'] == 'inner.txt' and r['nesting_depth'] == 1 for r in results)
+
+    def test_unsupported_format(self, tmp_path):
+        archive = tmp_path / 'test.rar'
+        archive.write_bytes(b'Not a real archive')
+
+        with pytest.raises(ValueError, match='Unsupported archive format'):
+            self.ext.extract_archive(str(archive))
+
+    def test_cleanup_removes_extracted_dirs(self, make_zip, tmp_path):
+        archive = tmp_path / 'test.zip'
+        archive.write_bytes(make_zip({'file.txt': 'Content'}))
+
+        extracted = self.ext.extract_archive(str(archive))
+        assert os.path.isdir(extracted)
+
+        self.ext.cleanup()
+
+        assert not os.path.exists(extracted)
+        assert self.ext.temp_dirs == []
 
 
-def test_cleanup(sample_zip_archive, executor):
-    with ArchiveExtractor(executor=executor) as extractor:
-        extracted_dir = extractor.extract_archive(sample_zip_archive)
-        assert os.path.exists(extracted_dir)
-    assert not os.path.exists(extracted_dir)
+
+
+
+
+class TestArchiveExtractorRun:
+    def     _collect_results(self, extractor, timeout=10):
+        items = []
+        while True:
+            item = extractor.results_queue.get(timeout=timeout)
+            if item is None:
+                break
+            items.append(item)
+        return items
+    
+    def test_run_returns_matching_files(self, make_zip, tmp_path):
+        archive = tmp_path / 'test.zip'
+        archive.write_bytes(make_zip({'file1.txt': 'Content of file 1', 'file2.log': 'Log content'}))
+
+        executor = ThreadPoolExecutor(max_workers=2)
+        with ArchiveExtractor(executor=executor, max_depth=2) as ext:
+            ext.run(str(archive), pattern='*.txt', source_archive_name='test.zip')
+            results = self._collect_results(ext)
+
+        assert len(results) == 1
+        assert results[0]['file_name'] == 'file1.txt'
+        assert results[0]['source_archive'] == 'test.zip'
+        assert results[0]['nesting_depth'] == 0
+    
+    def test_run_returns_no_results_when_no_matches(self, make_zip, tmp_path):
+        archive = tmp_path / 'test.zip'
+        archive.write_bytes(make_zip({'file1.txt': 'Content of file 1', 'file2.log': 'Log content'}))
+
+        executor = ThreadPoolExecutor(max_workers=2)
+        with ArchiveExtractor(executor=executor, max_depth=2) as ext:
+            ext.run(str(archive), pattern='*.json', source_archive_name='test.zip')
+            results = self._collect_results(ext)
+
+        assert len(results) == 0
+
+    def test_run_returns_all_matching_files(self, make_zip, tmp_path):
+        archive = tmp_path / 'test.zip'
+        archive.write_bytes(make_zip({
+            'file1.txt': 'First File',
+            'file2.txt': 'Second File',
+            'file3.txt': 'Third File',
+            'skip.json': 'Should be skipped'
+        }))
+
+        executor = ThreadPoolExecutor(max_workers=2)
+        with ArchiveExtractor(executor=executor, max_depth=2) as ext:
+            ext.run(str(archive), pattern='*.txt', source_archive_name='test.zip')
+            results = self._collect_results(ext)
+
+        assert len(results) == 3
+        names = {r['file_name'] for r in results}
+        assert names == {'file1.txt', 'file2.txt', 'file3.txt'}
