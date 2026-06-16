@@ -224,6 +224,39 @@ Uses Python's `fnmatch` for glob-style matching:
 
 ## Usage Examples
 
+## End-to-End Workflow Example
+
+This example demonstrates the complete workflow for extracting and retrieving results using a test archive file with deeply nested structure.
+
+### Step 1: Submit an Extraction Job
+
+Submit the archive file and pattern to extract:
+```bash
+curl.exe -X POST "http://localhost:5000/extractions" \
+  -F "archive=@test_deeply_nested.zip" \
+  -F "pattern=**/*.json"
+```
+
+**Response**: Returns a job ID (example: `de4e304d-72a6-470d-8210-5671dee9ba49`)
+
+### Step 2: Check Job Status
+
+Query the job status to monitor extraction progress:
+```bash
+curl.exe -X GET "http://localhost:5000/extractions/de4e304d-72a6-470d-8210-5671dee9ba49"
+```
+
+**Response**: Shows job status (`pending`, `processing`, `completed`, or `failed`), match count, and timing information.
+
+### Step 3: Retrieve Extraction Results
+
+Once the job is completed, fetch the matched files:
+```bash
+curl.exe -X GET "http://localhost:5000/extractions/de4e304d-72a6-470d-8210-5671dee9ba49/results"
+```
+
+**Response**: Returns paginated list of all matched files with metadata (path, size, nesting level, source archive).
+
 ### Extract all JSON files
 ```bash
 curl -X POST http://localhost:5000/extractions \
@@ -267,32 +300,6 @@ Test coverage includes:
 - Nested archive extraction
 - Resource cleanup and temporary directory handling
 
-## Troubleshooting
-
-### Database Connection Error
-- Verify PostgreSQL is running: `psql -h $DB_HOST -U $DB_USER -d $DB_NAME`
-- Check `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD` are correct
-- Ensure database exists: `createdb -U postgres extractor`
-
-### Archive Extraction Fails
-- Verify archive format is supported (zip, tar, tar.gz, tar.bz2)
-- Check archive is not corrupted
-- Review logs for specific error messages
-
-### Slow Performance
-- Increase `EXTRACTION_CONCURRENCY` for faster processing
-- Check database performance and resource utilization
-- Reduce `MAX_NESTED_LEVEL` for deeply nested archives
-
-### Permission Errors
-- Ensure write permissions in temp directory
-- Verify PostgreSQL user has proper permissions
-
-### Service Won't Start
-- Check PostgreSQL is running and accessible
-- Verify environment variables are set correctly
-- Check logs: `docker-compose logs app`
-
 ## Project Structure
 
 ```
@@ -303,29 +310,17 @@ Test coverage includes:
 ├── docker-compose.yml          # Multi-container setup
 ├── tests/
 │   ├── conftest.py            # Pytest configuration
-│   └── test_app.py            # Test suite
+│   ├── test_app.py            # Unit tests for extraction logic
+│   ├── test_integration.py     # Integration tests
+│   ├── test_routes.py          # API endpoint tests
+│   └── __pycache__/            # Pytest cache
 └── README.md                   # This file
+└── test_deeply_nested.zip      # Sample Archive
 ```
-
-## Performance Characteristics
-
-- **Memory**: Constant usage regardless of archive size (queue-based streaming)
-- **Parallelism**: Multiple nested archives processed simultaneously
-- **Batch Commits**: Database writes every 100 results for optimal throughput
-- **Scalability**: Configurable workers via `EXTRACTION_CONCURRENCY`
-- **Throughput**: 100-500 MB/s on shallow archives; 2-4x speedup with parallelism on deep archives
-
-## Security Considerations
-
-1. **Path Traversal Protection**: Validates all extracted paths to prevent Zip Slip attacks
-2. **Symlink Protection**: TAR extraction prevents symlink escapes
-3. **Nesting Limits**: Configurable max depth prevents resource exhaustion
-4. **File Cleanup**: Temporary files automatically cleaned up after processing
-5. **Error Handling**: Sensitive details logged but not exposed to clients
 
 ## Database Schema
 
-Automatically created on startup:
+Automatically created on startup (PostgreSQL):
 
 ```sql
 CREATE TABLE jobs (
@@ -341,7 +336,7 @@ CREATE TABLE jobs (
 
 CREATE TABLE results (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  job_id VARCHAR(36) REFERENCES jobs(id),
+  job_id VARCHAR(36) REFERENCES jobs(id) ON DELETE CASCADE,
   file_path VARCHAR(1024) NOT NULL,
   file_name VARCHAR(255) NOT NULL,
   file_size INTEGER NOT NULL,
