@@ -289,16 +289,22 @@ curl -X POST http://localhost:5000/extractions \
 ```bash
 # Run all tests
 pytest tests/ -v
-
-# Run specific test
-pytest tests/test_app.py::test_extract_and_find_zip -v
 ```
 
 Test coverage includes:
-- Archive format detection (zip, tar, tar.gz, tar.bz2)
-- Pattern matching with glob patterns
-- Nested archive extraction
-- Resource cleanup and temporary directory handling
+- **Archive Extraction**: ZIP and TAR.GZ format extraction with file content verification
+- **Nested Archives**: Multi-level archive extraction with nesting depth tracking
+- **Unsupported Formats**: Error handling for unsupported archive types (e.g., RAR)
+- **Resource Management**: Temporary directory cleanup and extraction state management
+- **Pattern Matching**: Glob pattern matching with single and multiple file matches; no-match scenarios
+- **API Validation**: Request validation for missing or empty parameters in POST /extractions
+- **Job Management**: Job creation, submission, and background job triggering
+- **Status Tracking**: Job status retrieval with complete metadata (timestamps, match counts, errors)
+- **Result Retrieval**: Paginated result retrieval with complete response structure and field validation
+- **Error Handling**: HTTP status codes for various scenarios (404 nonexistent jobs, 500 failed jobs, 202 pending jobs)
+- **Job States**: Pending, processing, completed, and failed states with appropriate responses
+- **End-to-End Workflow**: Full extraction workflow from submission through result retrieval
+- **Health Checks**: Service and database connectivity validation
 
 ## Project Structure
 

@@ -76,12 +76,8 @@ class TestExtractArchive:
         assert self.ext.temp_dirs == []
 
 
-
-
-
-
 class TestArchiveExtractorRun:
-    def     _collect_results(self, extractor, timeout=10):
+    def _collect_results(self, extractor, timeout=10):
         items = []
         while True:
             item = extractor.results_queue.get(timeout=timeout)

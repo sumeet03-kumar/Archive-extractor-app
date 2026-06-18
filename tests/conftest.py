@@ -3,7 +3,6 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import io
-import os
 import tarfile
 import tempfile
 import zipfile
@@ -43,10 +42,6 @@ def clean_tables(app):
         _db.session.execute(delete(Result))
         _db.session.execute(delete(Job))
         _db.session.commit()
-
-
-
-
 
 
 @pytest.fixture
