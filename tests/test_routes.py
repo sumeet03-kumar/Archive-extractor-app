@@ -81,6 +81,19 @@ class TestSubmitExtraction:
         assert response.status_code == 400
         assert 'error' in response.get_json()
 
+    def test_exception_during_submission_returns_500(self, client, make_zip):
+        with patch('app.db.session.commit', side_effect=Exception('Database error')):
+            data = {
+                'pattern': '*.txt',
+                'archive': (io.BytesIO(make_zip({'file.txt': 'Content'})), 'test.zip')
+            }
+            response = client.post('/extractions', data=data, content_type='multipart/form-data')
+        
+        assert response.status_code == 500
+        body = response.get_json()
+        assert 'error' in body
+        assert 'Database error' in body['error']
+
 
 # GET /extractions/<job_id>
 class TestGetJobStatus:

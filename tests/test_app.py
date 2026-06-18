@@ -1,8 +1,10 @@
 import pytest
 import os
 import zipfile
+from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
-from app import ArchiveExtractor
+from app import ArchiveExtractor, process_extraction_job, Job, db as _db
+from datetime import datetime
 
 class TestExtractArchive:
     @pytest.fixture(autouse=True)
@@ -128,3 +130,117 @@ class TestArchiveExtractorRun:
         assert len(results) == 3
         names = {r['file_name'] for r in results}
         assert names == {'file1.txt', 'file2.txt', 'file3.txt'}
+
+
+class TestProcessExtractionJob:
+    def test_exception_during_extraction_sets_job_failed_status(self, app, make_zip, tmp_path):
+        archive = tmp_path / 'test.zip'
+        archive.write_bytes(make_zip({'file.txt': 'content'}))
+        
+        with app.app_context():
+            job = Job(
+                id='test-job-1',
+                status='pending',
+                pattern='*.txt',
+                archive_name='test.zip'
+            )
+            _db.session.add(job)
+            _db.session.commit()
+
+        with patch('app.ArchiveExtractor.run', side_effect=Exception('Extraction failed')):
+            process_extraction_job('test-job-1', str(archive), '*.txt')
+
+        with app.app_context():
+            job = Job.query.filter_by(id='test-job-1').first()
+            assert job.status == 'failed'
+            assert 'Extraction failed' in job.error
+            assert job.completed_at is not None
+
+    def test_exception_during_extraction_sets_completed_at(self, app, make_zip, tmp_path):
+        archive = tmp_path / 'test.zip'
+        archive.write_bytes(make_zip({'file.txt': 'content'}))
+        
+        with app.app_context():
+            job = Job(
+                id='test-job-2',
+                status='pending',
+                pattern='*.txt',
+                archive_name='test.zip'
+            )
+            _db.session.add(job)
+            _db.session.commit()
+
+        with patch('app.ArchiveExtractor.run', side_effect=ValueError('Invalid pattern')):
+            process_extraction_job('test-job-2', str(archive), '*.txt')
+
+        with app.app_context():
+            job = Job.query.filter_by(id='test-job-2').first()
+            assert job.completed_at is not None
+            assert isinstance(job.completed_at, datetime)
+
+    def test_archive_file_removed_after_successful_processing(self, app, make_zip, tmp_path):
+        archive = tmp_path / 'test.zip'
+        archive.write_bytes(make_zip({'file.txt': 'content'}))
+        archive_path = str(archive)
+        
+        with app.app_context():
+            job = Job(
+                id='test-job-3',
+                status='pending',
+                pattern='*.txt',
+                archive_name='test.zip'
+            )
+            _db.session.add(job)
+            _db.session.commit()
+
+        assert os.path.exists(archive_path)
+        
+        process_extraction_job('test-job-3', archive_path, '*.txt')
+        
+        assert not os.path.exists(archive_path)
+
+    def test_archive_file_removed_after_failed_processing(self, app, make_zip, tmp_path):
+        archive = tmp_path / 'test.zip'
+        archive.write_bytes(make_zip({'file.txt': 'content'}))
+        archive_path = str(archive)
+        
+        with app.app_context():
+            job = Job(
+                id='test-job-4',
+                status='pending',
+                pattern='*.txt',
+                archive_name='test.zip'
+            )
+            _db.session.add(job)
+            _db.session.commit()
+
+        assert os.path.exists(archive_path)
+        
+        with patch('app.ArchiveExtractor.run', side_effect=Exception('Processing error')):
+            process_extraction_job('test-job-4', archive_path, '*.txt')
+        
+        assert not os.path.exists(archive_path)
+
+    def test_exception_stores_error_message_in_job(self, app, make_zip, tmp_path):
+        archive = tmp_path / 'test.zip'
+        archive.write_bytes(make_zip({'file.txt': 'content'}))
+        
+        with app.app_context():
+            job = Job(
+                id='test-job-5',
+                status='pending',
+                pattern='*.txt',
+                archive_name='test.zip'
+            )
+            _db.session.add(job)
+            _db.session.commit()
+
+        error_msg = 'Database connection failed'
+        with patch('app.ArchiveExtractor.run', side_effect=Exception(error_msg)):
+            process_extraction_job('test-job-5', str(archive), '*.txt')
+
+        with app.app_context():
+            job = Job.query.filter_by(id='test-job-5').first()
+            assert job.error == error_msg
+            assert job.status == 'failed'
+
