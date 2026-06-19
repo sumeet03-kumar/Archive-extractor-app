@@ -28,6 +28,7 @@ A robust HTTP service for extracting and searching files within archive files (z
 - Job: Extraction job status, pattern, archive name, timestamps, match count, errors
 - Result: Individual file matches with metadata (path, size, nesting level, source archive)
 
+**Asynchronous Job Processing Rationale**: In-process ThreadPoolExecutor + Queue avoids external dependencies (no Celery/Redis), simplifies deployment (single process), and provides real-time status updates via database polling. For single-instance deployments with moderate concurrency (default: 4 job workers), this approach balances simplicity, operational overhead, and performance.
 
 ## Prerequisites
 
@@ -125,6 +126,8 @@ Submit archive file and pattern to extract matching files.
 **Parameters** (form-data):
 - `archive` (file): Archive to process (zip, tar, tar.gz, tar.bz2)
 - `pattern` (string): Glob pattern for matching (e.g., `*.txt`, `**/*.json`, `src/**/config.*`)
+
+**Design Choice**: Multipart/form-data upload is used for direct file streaming, avoiding URL-based references which would require filesystem access or external I/O. This approach ensures security (no path traversal), simplicity (no external dependencies), and supports large files efficiently through streaming.
 
 ```bash
 curl -X POST http://localhost:5000/extractions \
